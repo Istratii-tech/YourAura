@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">YourAura</string>
+    <string name="channel_hub">Room</string>
+    <string name="hub_title">Room %1$s</string>
+    <string name="hub_text">This phone is the room\'s hub: devices connect to it</string>
+    <string name="hub_title_live">Room %1$s · broadcasting sound</string>
+    <string name="hub_text_live">This phone broadcasts its sound to the room\'s devices</string>
+    <string name="stop_broadcast">Stop broadcast</string>
+</resources>

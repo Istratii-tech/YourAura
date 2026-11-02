@@ -1,0 +1,7 @@
+media/
+node_modules/
+.DS_Store
+*.part
+__pycache__/
+# the privacy gate (its word list and its scripts) stays on this machine: never published
+tools/

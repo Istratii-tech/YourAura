@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#050208">
+<title>YourAura</title>
+<style>
+  /* Скевоморфизм в духе Mac OS X Snow Leopard: тёмные HUD-панели, гелевые кнопки, LCD как в iTunes. */
+  :root {
+    --bg: #050208; --text: #f1e9fa; --muted: #a596bd; --pink: #ff5fcf; --violet: #a35cff;
+    --ok: #8af5cf; --warn: #ffc875; --bad: #ff6f95;
+    --gel: linear-gradient(180deg, rgba(255, 255, 255, .55) 0%, rgba(255, 255, 255, .16) 49%, rgba(255, 255, 255, 0) 50%), linear-gradient(115deg, #ff4fc8, #b04dff);
+    --graphite: linear-gradient(180deg, #6f6082 0%, #4e4160 50%, #3d3150 51%, #4a3d5c 100%);
+    --panel: linear-gradient(180deg, rgba(40, 28, 52, .93), rgba(20, 12, 29, .95) 60%, rgba(15, 9, 22, .96));
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 "Lucida Grande", "Lucida Sans Unicode", "Helvetica Neue", Helvetica, Arial, sans-serif; -webkit-tap-highlight-color: transparent; }
+  body { overflow-x: hidden; }
+
+  /* северное сияние */
+  .aurora { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }   /* drawn by aurora.js */
+
+  main { position: relative; z-index: 1; max-width: 560px; margin: 0 auto; padding: 16px 16px calc(32px + env(safe-area-inset-bottom)); }
+  header { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 16px; }
+  .logo { font: 800 24px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; letter-spacing: -.02em; margin: 0; background: linear-gradient(120deg, #ff5fcf, #b45cff 55%, #6d5cff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+  /* капсула статуса — утопленная, как поле поиска в Snow Leopard */
+  .pill { color: var(--muted); font-size: 12px; padding: 4px 11px; border-radius: 999px; white-space: nowrap; border: 1px solid #000; background: linear-gradient(180deg, #0b0710, #1d1526); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .9), 0 1px 0 rgba(255, 255, 255, .12); text-shadow: 0 -1px 0 #000; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: 0; background: radial-gradient(circle at 50% 30%, #ffc2d2, #ff6f95 50%, #a3223f); box-shadow: 0 0 0 1px rgba(0, 0, 0, .7); }
+  .dot.on { background: radial-gradient(circle at 50% 30%, #e6fff5, #6ff0bf 50%, #1f8f63); box-shadow: 0 0 0 1px rgba(0, 0, 0, .7), 0 0 6px rgba(111, 240, 191, .6); }
+
+  /* HUD-панель с полосой заголовка */
+  section { background: var(--panel); border: 1px solid #000; border-radius: 10px; padding: 0 14px 14px; margin-bottom: 14px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .05), 0 12px 30px rgba(0, 0, 0, .55); overflow: hidden; }
+  section > h2 { position: relative; margin: 0 -14px 12px; padding: 6px 70px; text-align: center; font-size: 13px; font-weight: bold; color: #efe6f8; text-shadow: 0 -1px 0 rgba(0, 0, 0, .9); background: linear-gradient(180deg, #5d4d70, #3b2f4c 55%, #31273e); border-bottom: 1px solid #050208; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3); }
+  section > h2 .side { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+
+  /* кнопки: графитовый гель, главные — розово-фиолетовый гель */
+  button { font: inherit; font-size: 13px; color: #f3ecfa; cursor: pointer; padding: 5px 14px; border-radius: 999px; border: 1px solid #07030b; background: var(--graphite); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 1px 1px rgba(0, 0, 0, .55); text-shadow: 0 -1px 0 rgba(0, 0, 0, .75); }
+  button:active { background: linear-gradient(180deg, #33283f, #4a3d5c); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .7); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { color: #fff; font-weight: bold; border-color: #4a0d45; background: var(--gel); box-shadow: inset 0 -4px 8px rgba(255, 190, 245, .45), inset 0 1px 0 rgba(255, 255, 255, .6), 0 1px 3px rgba(0, 0, 0, .6), 0 0 14px rgba(230, 80, 255, .3); text-shadow: 0 -1px 0 rgba(90, 0, 80, .6); }
+  button.primary:active { filter: brightness(.85); }
+  button.mini { padding: 2px 10px; font-size: 11px; }
+  .icon { width: 32px; height: 32px; padding: 0; display: inline-grid; place-items: center; border-radius: 50%; flex: none; color: #d9cde8; background: transparent; border: 1px solid transparent; box-shadow: none; }
+  .icon svg { width: 16px; height: 16px; filter: drop-shadow(0 -1px 0 rgba(0, 0, 0, .8)); }
+  .icon:hover:not(:disabled) { background: var(--graphite); border-color: #07030b; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3); }
+  .icon:active:not(:disabled) { background: linear-gradient(180deg, #33283f, #4a3d5c); }
+  .icon.on { color: var(--bad); }
+
+  /* LCD «Сейчас играет» как в iTunes */
+  .lcd { border-radius: 8px; padding: 12px 14px 6px; text-align: center; border: 1px solid #000; background: radial-gradient(ellipse 120% 80% at 50% 0%, rgba(255, 110, 220, .12), transparent 60%), linear-gradient(180deg, #221630, #120b1a); box-shadow: inset 0 2px 7px rgba(0, 0, 0, .95), 0 1px 0 rgba(255, 255, 255, .14); }
+  .title { font-size: 17px; font-weight: bold; word-break: break-word; min-height: 25px; text-shadow: 0 0 14px rgba(255, 120, 220, .35), 0 1px 0 #000; }
+  .upnext { color: var(--muted); font-size: 12px; min-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .times { display: flex; justify-content: space-between; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; }
+  #seek { margin-top: 6px; }
+  .controls { display: flex; gap: 16px; align-items: center; justify-content: center; margin-top: 14px; }
+  .status { color: var(--muted); font-size: 12px; text-align: center; min-height: 18px; margin-top: 10px; text-shadow: 0 -1px 0 #000; }
+
+  /* круглые кнопки транспорта: стеклянные шары */
+  .orb { position: relative; border-radius: 50%; padding: 0; display: grid; place-items: center; border: 1px solid #07030b; }
+  .orb svg { position: relative; z-index: 1; filter: drop-shadow(0 -1px 0 rgba(0, 0, 0, .6)); }
+  .orb::after { content: ""; position: absolute; left: 14%; right: 14%; top: 4%; height: 46%; border-radius: 50% / 60% 60% 40% 40%; background: linear-gradient(180deg, rgba(255, 255, 255, .75), rgba(255, 255, 255, .08)); pointer-events: none; }
+  #play { width: 68px; height: 68px; color: #fff; border-color: #3e0a3b; background: radial-gradient(circle at 50% 88%, #ffb3ef 0%, #ec4fcf 32%, #a43ae6 72%, #5a1d8f 100%); box-shadow: inset 0 -3px 8px rgba(255, 200, 245, .5), 0 2px 5px rgba(0, 0, 0, .7), 0 0 22px rgba(230, 80, 255, .4); }
+  #play svg { width: 36px; height: 36px; }
+  #prev, #next { width: 44px; height: 44px; color: #f1e9fa; background: radial-gradient(circle at 50% 90%, #8d7ca3 0%, #54456a 45%, #2b2137 100%); box-shadow: inset 0 -2px 5px rgba(220, 200, 255, .25), 0 2px 4px rgba(0, 0, 0, .7); }
+  #prev svg, #next svg { width: 18px; height: 18px; }
+
+  /* слайдеры: утопленная дорожка, гелевая заливка, блестящая ручка */
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; background: transparent; margin: 0; --p: 0%; touch-action: none; }
+  input[type=range]::-webkit-slider-runnable-track { height: 7px; border-radius: 7px; border: 1px solid #000; background: linear-gradient(180deg, #ffa3e8, #d04ad6 55%, #8f3ad8) 0 / var(--p) 100% no-repeat, linear-gradient(180deg, #06030a, #2a2133); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .9), 0 1px 0 rgba(255, 255, 255, .12); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -6.5px; border-radius: 50%; border: 1px solid #1b1220; background: radial-gradient(circle at 50% 28%, #fff 0%, #ece6f2 38%, #a99cb8 100%); box-shadow: 0 1px 3px rgba(0, 0, 0, .75), inset 0 -2px 3px rgba(0, 0, 0, .12); }
+  input[type=range]::-moz-range-track { height: 7px; border-radius: 7px; border: 1px solid #000; background: linear-gradient(180deg, #06030a, #2a2133); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .9); }
+  input[type=range]::-moz-range-progress { height: 7px; border-radius: 7px; background: linear-gradient(180deg, #ffa3e8, #d04ad6 55%, #8f3ad8); }
+  input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; border: 1px solid #1b1220; background: radial-gradient(circle at 50% 28%, #fff 0%, #ece6f2 38%, #a99cb8 100%); box-shadow: 0 1px 3px rgba(0, 0, 0, .75); }
+  input[type=range]:disabled { opacity: .45; }
+
+  /* таблицы в духе iTunes: утопленная рамка, полосатые строки, выделение гелем */
+  ul { list-style: none; margin: 0; padding: 0; }
+  ul.table { border: 1px solid #000; border-radius: 6px; overflow: hidden; background: rgba(5, 2, 9, .6); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .8), 0 1px 0 rgba(255, 255, 255, .1); }
+  ul.table > li { display: flex; align-items: center; gap: 4px; padding: 5px 6px 5px 10px; min-height: 42px; border-top: 1px solid rgba(255, 255, 255, .04); }
+  ul.table > li:first-child { border-top: 0; }
+  ul.table:empty::before { content: attr(data-empty); display: block; padding: 12px; text-align: center; color: var(--muted); font-size: 13px; }
+  ul.table > li:nth-child(even) { background: rgba(255, 255, 255, .04); }
+  li .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 -1px 0 #000; }
+  li .meta { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  li.empty { color: var(--muted); font-size: 13px; justify-content: center; }
+  #tracks .name { cursor: pointer; }
+  #tracks li.cur { background: linear-gradient(180deg, #d867ea, #a043d6 60%, #8a37c4); border-top-color: #5c1a80; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35); }
+  #tracks li.cur .name { color: #fff; font-weight: bold; text-shadow: 0 -1px 0 rgba(60, 0, 70, .7); }
+  #tracks li.cur .meta, #tracks li.cur .icon { color: #fbeeff; }
+  .num { color: var(--muted); font-size: 11px; width: 16px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+  .saved { width: 7px; height: 7px; border-radius: 50%; flex: none; background: radial-gradient(circle at 50% 30%, #f1dcff, #a35cff 60%, #5a2a99); box-shadow: 0 0 0 1px rgba(0, 0, 0, .6), 0 0 5px rgba(163, 92, 255, .7); }
+  .after { color: var(--muted); font-size: 12px; margin-top: 8px; text-align: center; }
+
+  /* строки устройств в блоках «Громкость» и «Синхронизация» */
+  ul.table > li.dev { display: block; padding: 8px 10px 6px; }
+  .devhead { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+  .slide { display: flex; align-items: center; gap: 8px; }
+  .slide .spk { color: var(--muted); display: grid; place-items: center; flex: none; }
+  .slide .spk svg { width: 14px; height: 14px; }
+  .slide button { padding: 2px 9px; font-size: 11px; flex: none; }
+  .readout { font: bold 12px/1 "Lucida Grande", Menlo, monospace; color: #ffd6f5; padding: 3px 7px; border-radius: 4px; border: 1px solid #000; background: linear-gradient(180deg, #120a19, #24182f); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .9), 0 1px 0 rgba(255, 255, 255, .1); text-shadow: 0 0 6px rgba(255, 120, 220, .5); min-width: 62px; text-align: center; font-variant-numeric: tabular-nums; }
+  .master { display: flex; align-items: center; gap: 10px; padding: 2px 2px 12px; }
+  .master b { font-size: 12px; white-space: nowrap; text-shadow: 0 -1px 0 #000; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .tip { margin-top: 12px; padding: 10px 12px; border-radius: 6px; font-size: 13px; display: none; border: 1px solid #000; background: linear-gradient(180deg, rgba(70, 30, 90, .55), rgba(40, 16, 56, .55)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12); }
+  .tip.show { display: block; }
+
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .mut { color: var(--muted); }
+  .addrow { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  label.btn { display: inline-block; cursor: pointer; font-size: 13px; padding: 5px 14px; border-radius: 999px; border: 1px solid #07030b; background: var(--graphite); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 1px 1px rgba(0, 0, 0, .55); text-shadow: 0 -1px 0 rgba(0, 0, 0, .75); }
+  label.btn input { display: none; }
+  .hint { color: var(--muted); font-size: 12px; text-shadow: 0 -1px 0 #000; }
+
+  .connect { display: flex; gap: 16px; align-items: center; }
+  .qr { width: 148px; flex: none; border-radius: 8px; overflow: hidden; border: 1px solid #000; box-shadow: 0 2px 6px rgba(0, 0, 0, .7), 0 0 24px rgba(214, 79, 255, .3); }
+  .qr svg { display: block; width: 100%; height: auto; }
+  .links { min-width: 0; }
+  .links a { display: block; color: var(--text); text-decoration: none; font-weight: bold; font-size: 16px; margin: 4px 0; word-break: break-all; text-shadow: 0 -1px 0 #000; }
+  .links a.alt { font-weight: normal; font-size: 12px; color: var(--muted); }
+  @media (max-width: 400px) { .connect { flex-direction: column; align-items: flex-start; } .qr { width: 180px; } }
+
+  .field { display: grid; gap: 5px; margin-bottom: 14px; }
+  .field > span { color: var(--muted); font-size: 12px; text-shadow: 0 -1px 0 #000; }
+  .field input[type=text] { font: inherit; color: inherit; padding: 6px 9px; border-radius: 4px; border: 1px solid #000; background: linear-gradient(180deg, #0b0710, #1d1526); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .9), 0 1px 0 rgba(255, 255, 255, .12); }
+  .field input[type=text]:focus { outline: none; box-shadow: inset 0 1px 3px rgba(0, 0, 0, .9), 0 0 0 3px rgba(214, 79, 255, .55); }
+  #debug { color: var(--muted); font-size: 11px; margin-top: 10px; font-variant-numeric: tabular-nums; text-shadow: 0 -1px 0 #000; }
+
+  /* галочка в стиле Aqua */
+  .switch { display: flex; align-items: center; gap: 9px; cursor: pointer; margin-bottom: 10px; text-shadow: 0 -1px 0 #000; }
+  .switch input { -webkit-appearance: none; appearance: none; width: 17px; height: 17px; margin: 0; flex: none; display: grid; place-items: center; border-radius: 4px; border: 1px solid #05020a; background: linear-gradient(180deg, #fbf8fd, #d3cadf); box-shadow: inset 0 1px 0 #fff, 0 1px 1px rgba(0, 0, 0, .6); cursor: pointer; }
+  .switch input:checked { border-color: #4a0d45; background: var(--gel); }
+  .switch input:checked::after { content: "✓"; color: #fff; font-size: 12px; font-weight: bold; line-height: 1; text-shadow: 0 -1px 0 rgba(80, 0, 70, .6); }
+  .where { font-size: 12px; color: var(--muted); margin: 4px 0 10px; text-shadow: 0 -1px 0 #000; }
+  .where code { color: var(--text); background: rgba(0, 0, 0, .45); padding: 1px 5px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, .8); word-break: break-all; }
+
+  .banner { display: none; padding-top: 14px; border-color: #2a0626; background: linear-gradient(180deg, rgba(84, 24, 74, .94), rgba(44, 12, 42, .95)); }
+  .banner.show { display: block; }
+  .banner p { margin: 0 0 10px; text-shadow: 0 -1px 0 #000; }
+  .banner .actions { margin-top: 0; }
+
+  /* YouTube */
+  .ytwrap { position: relative; aspect-ratio: 16 / 9; margin: -4px -6px 10px; border-radius: 5px; overflow: hidden; border: 1px solid #000; background: #000; box-shadow: 0 1px 0 rgba(255, 255, 255, .1); }
+  .ytwrap iframe, #ytplayer { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .yttap { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 10px; border-radius: 999px; font-size: 12px; pointer-events: none; background: rgba(20, 8, 30, .85); border: 1px solid #000; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2); }
+  .ytthumb { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 5px; border: 1px solid #000; margin: -4px 0 10px; opacity: .85; }
+  .badge { flex: none; font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 999px; color: #fff; border: 1px solid #3a0710; background: linear-gradient(180deg, rgba(255, 255, 255, .45), rgba(255, 255, 255, .1) 50%, rgba(255, 255, 255, 0) 51%), linear-gradient(180deg, #ff4b6e, #c3174a); text-shadow: 0 -1px 0 rgba(0, 0, 0, .4); }
+  #tracks li.cur .badge { border-color: #5c1a80; }
+  .badge.embed { opacity: .6; }   /* не скачалось: играет через плеер YouTube */
+  .ythelp code { color: var(--text); background: rgba(0, 0, 0, .45); padding: 1px 5px; border-radius: 4px; word-break: break-all; }
+  .ythelp .hint { margin-top: 8px; }  .ytadd { display: flex; gap: 8px; margin-top: 12px; }
+  .ytadd input, .namerow input { flex: 1; min-width: 0; font: inherit; color: inherit; padding: 6px 11px; border-radius: 999px; border: 1px solid #000; background: linear-gradient(180deg, #0b0710, #1d1526); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .9), 0 1px 0 rgba(255, 255, 255, .12); }
+  .ytadd input:focus, .namerow input:focus { outline: none; box-shadow: inset 0 1px 3px rgba(0, 0, 0, .9), 0 0 0 3px rgba(214, 79, 255, .55); }
+  #ytinfo { margin-top: 6px; min-height: 0; }
+  .namerow { display: flex; gap: 8px; }
+  .namerow input { border-radius: 4px; }
+
+  /* строки устройств: иконка типа, имя и подпись */
+  .kind { flex: none; width: 22px; height: 22px; color: #d9cde8; display: grid; place-items: center; }
+  .kind svg { width: 20px; height: 20px; filter: drop-shadow(0 -1px 0 rgba(0, 0, 0, .8)); }
+  .who { flex: 1; min-width: 0; display: grid; }
+  .who .sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 -1px 0 #000; }
+
+  /* «Показать имя»: устройство само подсвечивает, кто оно */
+  #identify { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; background: radial-gradient(circle at 50% 45%, rgba(255, 79, 200, .55), rgba(110, 40, 200, .55) 45%, rgba(5, 2, 8, .92) 80%); animation: idpulse 1.2s ease-in-out infinite alternate; cursor: pointer; }
+  @keyframes idpulse { from { background-size: 100% 100%; filter: brightness(.9); } to { filter: brightness(1.25); } }
+  .idcard { text-align: center; padding: 26px 30px; border-radius: 14px; border: 1px solid #000; background: var(--panel); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2), 0 20px 60px rgba(0, 0, 0, .8); }
+  .idkind svg { width: 54px; height: 54px; color: #ffd6f5; filter: drop-shadow(0 0 12px rgba(255, 120, 220, .7)); }
+  .idname { font-size: 30px; font-weight: bold; margin: 8px 0 4px; word-break: break-word; text-shadow: 0 0 18px rgba(255, 120, 220, .6), 0 1px 0 #000; }
+
+  .toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translate(-50%, calc(100% + 60px + env(safe-area-inset-bottom))); visibility: hidden; z-index: 25; max-width: min(520px, calc(100% - 32px)); padding: 9px 16px; border-radius: 12px; font-size: 13px; border: 1px solid #000; background: var(--panel); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2), 0 10px 30px rgba(0, 0, 0, .7); transition: transform .35s, visibility 0s .35s; text-shadow: 0 -1px 0 #000; }
+  .toast.show { transform: translate(-50%, 0); visibility: visible; transition: transform .35s; }   /* hidden: fully below the edge, shadow too */
+
+  .overlay { position: fixed; inset: 0; background: rgba(5, 2, 8, .7); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+  .overlay.hide { display: none; }
+  .overlay section { width: 100%; max-width: 380px; text-align: center; margin: 0; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06), 0 20px 60px rgba(0, 0, 0, .8), 0 0 80px rgba(180, 92, 255, .2); }
+  .overlay .logo { font-size: 34px; margin-top: 10px; }
+  .overlay p { color: var(--muted); margin: 8px 0 18px; text-shadow: 0 -1px 0 #000; }
+  .overlay button { width: 100%; margin-top: 10px; padding: 9px 14px; font-size: 14px; }
+  .joinroom { display: flex; gap: 8px; margin-top: 14px; }
+  .joinroom input { flex: 1; min-width: 0; font: inherit; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; text-align: center; color: inherit; padding: 7px 11px; border-radius: 999px; border: 1px solid #000; background: linear-gradient(180deg, #0b0710, #1d1526); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .9), 0 1px 0 rgba(255, 255, 255, .12); }
+  .joinroom button { width: auto; margin-top: 0; }
+  #roominfo { margin-top: 10px; min-height: 18px; }
+  .roomcode { font: bold 28px/1.2 Menlo, "Lucida Grande", monospace; letter-spacing: .14em; color: #ffd6f5; text-shadow: 0 0 12px rgba(255, 120, 220, .6), 0 1px 0 #000; margin: 2px 0 6px; }
+  .roomrole { margin-top: 12px; }
+  .livebox { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .08); }
+  .livebox { text-align: center; }
+  .livebox .actions { justify-content: center; margin: 0 0 8px; }
+  .livevol { margin-top: 6px; font-weight: 600; }
+  .livevol.ok { color: var(--ok); } .livevol.warn { color: var(--warn); }   /* over .hint's grey */
+  .applink { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, .08); }
+  .applink .btn { display: table; margin-top: 8px; }   /* своей строкой под текстом */
+  a.btn { display: inline-block; text-decoration: none; font-size: 13px; padding: 5px 14px; border-radius: 999px; color: #fff; }
+  a.btn.primary { font-weight: bold; border: 1px solid #4a0d45; background: var(--gel); box-shadow: inset 0 -4px 8px rgba(255, 190, 245, .45), inset 0 1px 0 rgba(255, 255, 255, .6), 0 1px 3px rgba(0, 0, 0, .6); text-shadow: 0 -1px 0 rgba(90, 0, 80, .6); }
+</style>
+</head>
+<body>
+<canvas class="aurora" aria-hidden="true"></canvas>
+<script src="aurora.js?v=2026.11.03"></script>
+
+<div id="roombox" class="overlay hide">
+  <section>
+    <h2>Комната</h2>
+    <h1 class="logo">YourAura</h1>
+    <p>Музыка звучит одновременно на всех устройствах в комнате. Создай комнату на одном устройстве,
+      остальные подключатся по QR-коду или коду комнаты.</p>
+    <button class="primary" id="newroom">Создать комнату</button>
+    <form class="joinroom" id="joinroom">
+      <input type="text" id="roomcode" placeholder="Код комнаты" autocomplete="off" autocapitalize="characters" maxlength="12" aria-label="Код комнаты">
+      <button>Войти</button>
+    </form>
+    <div class="hint" id="roominfo"></div>
+  </section>
+</div>
+
+<div id="joinbox" class="overlay hide">
+  <section>
+    <h2>Добро пожаловать</h2>
+    <h1 class="logo">YourAura</h1>
+    <p>Музыка звучит одновременно на всех устройствах, которые открыли эту страницу.</p>
+    <button class="primary" id="join">Включить звук на этом устройстве</button>
+    <button id="remote">Только пульт, без звука</button>
+  </section>
+</div>
+
+<main>
+  <header>
+    <h1 class="logo">YourAura</h1>
+    <span class="pill"><span class="dot" id="conn"></span><span id="conntext">нет связи</span></span>
+  </header>
+
+  <section class="banner" id="iosbanner"><p></p></section>
+
+  <section class="banner" id="resume">
+    <p>Браузер приостановил звук на этом устройстве.</p>
+    <div class="actions"><button class="primary" id="resumebtn">Вернуть звук</button></div>
+  </section>
+
+  <section class="banner" id="mutedbanner">
+    <p>Это устройство заглушено с пульта.</p>
+    <div class="actions"><button class="primary" id="unmutebtn">Включить звук</button></div>
+  </section>
+
+  <section class="banner" id="cacheask">
+    <p><b>Сохранять треки на этом устройстве?</b><br>
+      <span class="hint">Трек, который уже звучал, в следующий раз не будет скачиваться заново: старт быстрее, трафика меньше.
+      Треки хранятся в памяти браузера для этого сайта. Посмотреть и удалить их можно в разделе «Это устройство» внизу.</span></p>
+    <div class="actions"><button class="primary" id="cacheyes">Сохранять</button><button id="cacheno">Не нужно</button></div>
+  </section>
+
+  <section>
+    <h2>Сейчас играет</h2>
+    <div class="lcd">
+      <div class="ytwrap" id="ytwrap" hidden><div id="ytplayer"></div><div class="yttap" id="yttap" hidden>Нажми на видео, чтобы YouTube разрешил звук</div></div>
+      <img class="ytthumb" id="ytthumb" alt="" hidden>
+      <div class="title" id="title"></div>
+      <div class="upnext" id="upnext"></div>
+      <input type="range" id="seek" min="0" max="0" step="0.1" value="0" aria-label="Позиция">
+      <div class="times"><span id="cur">0:00</span><span id="dur">–:––</span></div>
+    </div>
+    <div class="controls">
+      <button class="orb" id="prev" aria-label="Назад"></button>
+      <button class="orb" id="play" aria-label="Играть"></button>
+      <button class="orb" id="next" aria-label="Следующий"></button>
+    </div>
+    <div class="status" id="status"></div>
+    <div class="tip show ythelp" id="ythelp" hidden></div>
+    <div class="livebox" id="livebox" hidden>
+      <div class="actions"><button class="primary" id="livebtn">Транслировать звук телефона</button></div>
+      <div class="hint" id="livehint"></div>
+      <div class="hint livevol" id="livevol" hidden></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Очередь <span class="side"><button class="mini" id="clearq">Очистить</button></span></h2>
+    <ul class="table" id="queue"></ul>
+    <div class="after" id="after"></div>
+  </section>
+
+  <section>
+    <h2>Библиотека</h2>
+    <ul class="table" id="tracks"></ul>
+    <form class="ytadd" id="ytform">
+      <input type="text" id="yturl" placeholder="Вставь ссылку на YouTube" inputmode="url" autocomplete="off" aria-label="Ссылка на YouTube">
+      <button class="primary">Добавить</button>
+    </form>
+    <div class="hint" id="ytinfo"></div>
+    <div class="addrow">
+      <label class="btn">＋ Добавить музыку<input type="file" id="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg,.opus" multiple></label>
+      <span class="hint" id="upinfo"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Громкость</h2>
+    <div class="master">
+      <b>Все устройства</b>
+      <div class="slide" style="flex:1"><span class="spk" data-icon="low"></span><input type="range" id="master" min="0" max="1" step="0.01" aria-label="Громкость на всех устройствах"><span class="spk" data-icon="high"></span></div>
+    </div>
+    <ul class="table" id="volrows" data-empty="Нет подключённых устройств"></ul>
+    <div class="hint" style="margin-top:8px">Общий ползунок выставляет всем одинаковую громкость. Ползунок устройства меняет только его.</div>
+  </section>
+
+  <section>
+    <h2>Синхронизация</h2>
+    <ul class="table" id="latrows" data-empty="Нет устройств со звуком"></ul>
+    <div class="hint" style="margin-top:8px">Если устройство звучит позже остальных, сдвигай его задержку вправо. Bluetooth-колонкам обычно нужно +150…250 мс.</div>
+    <div class="actions">
+      <button class="primary" id="calib">Калибровка щелчками</button>
+      <button id="resyncall">Пересинхронизировать все</button>
+      <button id="resync">Только это устройство</button>
+    </div>
+    <div class="tip" id="caltip">
+      Все устройства щёлкают в такт, на каждом четвёртом щелчке звук выше.
+      Встань между двумя устройствами, остальные заглуши в блоке «Громкость». Сдвигай задержку одного из них, пока два щелчка не сольются в один.
+      Потом по очереди подстрой остальные устройства.
+      <div class="actions"><button class="primary" id="calstop">Готово</button></div>
+    </div>
+    <div id="debug"></div>
+  </section>
+
+  <section>
+    <h2>Подключить устройство</h2>
+    <div class="connect">
+      <div class="qr" id="qr"></div>
+      <div class="links" id="links"></div>
+    </div>
+    <div class="roomrole" id="roomrole" hidden><span class="hint"></span>
+      <div class="actions"><button id="leaveroom">Выйти из комнаты</button></div></div>
+  </section>
+
+  <section>
+    <h2>Это устройство</h2>
+    <div class="field"><span>Имя. Хаб запоминает устройство, а если браузер забудет, узнает его по IP, модели и экрану.</span>
+      <div class="namerow"><input type="text" id="name" maxlength="40" aria-label="Имя устройства"><button id="findme">Показать имя</button></div></div>
+    <div class="field"><span>Язык</span>
+      <div class="actions"><button data-lang="ru">Русский</button><button data-lang="en">English</button></div></div>
+    <label class="switch"><input type="checkbox" id="cacheon"> Сохранять треки на этом устройстве</label>
+    <div class="where" id="where"></div>
+    <ul class="table" id="cached"></ul>
+    <div class="actions">
+      <button id="cacheall">Скачать всю библиотеку</button>
+      <button id="cacheclear">Удалить все</button>
+    </div>
+    <div class="hint" id="cacheinfo" style="margin-top:8px"></div>
+  </section>
+</main>
+<div id="identify" hidden onclick="this.hidden = true">
+  <div class="idcard"><div class="idkind" id="idkind"></div><div class="idname" id="idname"></div><div class="hint">Это устройство</div></div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script src="vendor/qrcode.js?v=2026.11.03"></script>
+<script type="module" src="app.js?v=2026.11.03"></script>
+</body>
+</html>

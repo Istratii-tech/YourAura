@@ -1,0 +1,62 @@
+// YourAura for Android: the phone hosts a room. A WebView runs the same site as GitHub Pages (from the APK's
+// assets, see `assets.srcDirs`), the Java side adds what a browser can't do: a hub for the Wi-Fi network,
+// YouTube audio through yt-dlp, broadcasting what the phone plays, pausing for calls, the screen off.
+plugins {
+    id 'com.android.application'
+}
+
+// The release key stays out of git: android/keystore.properties (storeFile, storePassword, keyAlias, keyPassword).
+// Without it release builds are signed with the debug key of the machine that builds them.
+def keystore = rootProject.file('keystore.properties')
+def keys = new Properties()
+if (keystore.exists()) keystore.withReader('UTF-8') { keys.load(it) }
+
+android {
+    namespace 'io.github.istratiitech.youraura'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'io.github.istratiitech.youraura'
+        minSdk 29          // Android 10+: playback capture (broadcast mode)
+        targetSdk 34
+        versionCode 1
+        versionName '2026.11.03'
+        ndk { abiFilters 'arm64-v8a' }   // yt-dlp ships Python per ABI; phones are arm64
+    }
+
+    signingConfigs {
+        if (keystore.exists()) {
+            release {
+                storeFile file(keys.storeFile)
+                storePassword keys.storePassword
+                keyAlias keys.keyAlias
+                keyPassword keys.keyPassword
+            }
+        }
+    }
+
+    sourceSets {
+        main.assets.srcDirs = ['../../public']   // the site itself, one source for web and app
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystore.exists() ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs { useLegacyPackaging true }   // yt-dlp's Python is unpacked from the .so files at run time
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
+}

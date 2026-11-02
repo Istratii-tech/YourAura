@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">YourAura</string>
+    <string name="channel_hub">Комната</string>
+    <string name="hub_title">Комната %1$s</string>
+    <string name="hub_text">Телефон — хаб комнаты: устройства подключаются к нему</string>
+    <string name="hub_title_live">Комната %1$s · идёт трансляция звука</string>
+    <string name="hub_text_live">Телефон транслирует свой звук на устройства комнаты</string>
+    <string name="stop_broadcast">Остановить трансляцию</string>
+</resources>
