@@ -5,8 +5,8 @@
 // nudges playbackRate (or restarts the source) when this device drifts. The next track is decoded
 // in advance and scheduled right at the end of the current one, so transitions are gapless.
 
-import { hasServer, serverLink, hostLink, guestLink, newRoomCode, cleanRoomCode, parsePacket } from './net.mjs?v=2026.11.03';
-import { L, lang, setLang, translatePage } from './i18n.mjs?v=2026.11.03';
+import { hasServer, serverLink, hostLink, guestLink, newRoomCode, cleanRoomCode, parsePacket } from './net.mjs?v=1.1';
+import { L, lang, setLang, translatePage } from './i18n.mjs?v=1.1';
 
 const APP_URL = 'https://github.com/Istratii-tech/YourAura/releases/latest';   // the Android app
 const $ = (s) => document.querySelector(s);
@@ -21,12 +21,18 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch {} },
 };
 const randomId = () => Math.random().toString(36).slice(2, 10);
+// Sound or remote, chosen in this tab: a reload (the hub was reopened) picks it again by itself.
+const session = {
+  get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
+};
 
 const ICON = {
   play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>',
   pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4.2" height="14" rx="1.2"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.2"/></svg>',
   next: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 6.2v11.6a.9.9 0 0 0 1.4.75l8.3-5.8a.9.9 0 0 0 0-1.5L6.4 5.45A.9.9 0 0 0 5 6.2z"/><rect x="16.5" y="5.5" width="2.6" height="13" rx="1"/></svg>',
   prev: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.2v11.6a.9.9 0 0 1-1.4.75l-8.3-5.8a.9.9 0 0 1 0-1.5l8.3-5.8A.9.9 0 0 1 19 6.2z"/><rect x="4.9" y="5.5" width="2.6" height="13" rx="1"/></svg>',
+  repeat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 3l3 3-3 3"/><path d="M4.5 11V9.5a3.5 3.5 0 0 1 3.5-3.5h11.5"/><path d="M7.5 21l-3-3 3-3"/><path d="M19.5 13v1.5a3.5 3.5 0 0 1-3.5 3.5H4.5"/><path d="M11 10.6l1.6-1.1v5"/></svg>',
   add: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   playNext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M4 12h7M4 17h7"/><path d="M15 11v8l5-4z" fill="currentColor"/></svg>',
   del: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
@@ -177,6 +183,7 @@ function audioAnchor() {
 const buffers = new Map();   // trackId -> AudioBuffer (current + next only)
 const failed = new Set();    // trackIds this device cannot decode
 const loadErrors = new Map();
+const retries = new Map();   // trackId -> failed downloads so far
 let loading = null;          // { id, progress, decoding, cached }
 const players = new Map();   // key -> { src, w, buf, ctxStart, posStart, rate } | { done: true }
 let anchor = 0;
@@ -374,6 +381,11 @@ async function load(t) {
   } catch (e) {
     failed.add(t.id);
     loadErrors.set(t.id, String((e && e.message) || e));
+    // A download that broke (the hub restarted, a proxy on the way answered 502) gets two more tries;
+    // a file this browser cannot decode stays failed.
+    const n = (retries.get(t.id) || 0) + 1;
+    retries.set(t.id, n);
+    if (!loading.decoding && n < 3) setTimeout(() => { failed.delete(t.id); pump(); }, 4000 * n);
   }
   loading = null;
   sendStatus();
@@ -396,6 +408,7 @@ async function pump() {
 
 // ---------- server link ----------
 function sendStatus(withSettings) {
+  if (removed) return;
   const durations = {}, ready = [...buffers.keys()];
   for (const [id, b] of buffers) durations[id] = b.duration;
   if (yt.cued && yt.trackId) {
@@ -507,7 +520,11 @@ function syncLive() {
   }
 }
 
+let hubBoot = null;
 function apply(s) {
+  // The hub was started again (the app reopened, a new version installed): load the page it serves now.
+  if (link.kind !== 'host' && s.boot && hubBoot && s.boot !== hubBoot) return location.reload();
+  hubBoot = s.boot || hubBoot;
   snap = s;
   const me = s.clients.find((c) => c.id === clientId);
   adoptSettings(me);
@@ -521,10 +538,24 @@ function apply(s) {
   render();
 }
 
+// This device was removed from the room on some remote: it goes quiet until someone reconnects it.
+let removed = false;
+function onRemoved() {
+  removed = true;
+  joined = false;
+  remoteOnly = false;
+  syncPlayers();
+  try { if (yt.ready) yt.player.pauseVideo(); } catch {}
+  $('#joinbox').classList.add('hide');
+  $('#removedbox').classList.remove('hide');
+}
+$('#rejoin').onclick = () => location.reload();
+
 function connect() {
   link.open({
-    snapshot: apply,
+    snapshot: (s) => { if (!removed) apply(s); },
     identify,
+    removed: onRemoved,
     online(on) {
       if (on && !online) { settingsPushed = false; sendStatus(); }
       online = on;
@@ -590,9 +621,10 @@ function unlockAudio() {
 }
 
 async function join() {
-  unlockAudio();
+  unlockAudio();   // without a tap (a rejoin after a reload) the browser may keep the sound off: #resume asks for one
   joined = true;
   remoteOnly = false;
+  session.set('ya-mode', 'sound');
   $('#joinbox').classList.add('hide');
   keepAwake();
   await syncClock(16);
@@ -832,17 +864,17 @@ const releaseRanges = () => setTimeout(() => document.querySelectorAll('input[ty
 window.addEventListener('pointerup', releaseRanges, true);
 window.addEventListener('pointercancel', releaseRanges, true);
 
-let qrFor = null;
-function renderQr(url) {
-  if (!url || url === qrFor || typeof qrcode !== 'function') return;
-  qrFor = url;
+const qrFor = {};
+function renderQr(id, url) {
+  if (!url || url === qrFor[id] || typeof qrcode !== 'function') return;
+  qrFor[id] = url;
   const q = qrcode(0, 'M');
   q.addData(url);
   q.make();
   const n = q.getModuleCount();
   let d = '';
   for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += `M${c} ${r}h1v1h-1z`;
-  $('#qr').innerHTML = `<svg viewBox="-3 -3 ${n + 6} ${n + 6}" shape-rendering="crispEdges" role="img" aria-label="${esc(L('QR-код {url}', { url }))}">
+  $('#' + id).innerHTML = `<svg viewBox="-3 -3 ${n + 6} ${n + 6}" shape-rendering="crispEdges" role="img" aria-label="${esc(L('QR-код {url}', { url }))}">
     <rect x="-3" y="-3" width="${n + 6}" height="${n + 6}" fill="#fff"/><path d="${d}" fill="#1b0833"/></svg>`;
 }
 
@@ -850,7 +882,8 @@ const VOL_ROW = `
   <div class="devhead"><span class="kind"></span><span class="who"><span class="name"></span><span class="sub"></span></span>
     <button class="icon" data-act="find" title="${L('Найти: устройство покажет своё имя и прозвенит')}" aria-label="${L('Найти устройство')}">${ICON.bell}</button>
     <button class="icon" data-act="rename" title="${L('Переименовать')}" aria-label="${L('Переименовать')}">${ICON.pencil}</button>
-    <button class="icon" data-act="mute"></button></div>
+    <button class="icon" data-act="mute"></button>
+    <button class="icon" data-act="forget" title="${L('Убрать из комнаты')}" aria-label="${L('Убрать из комнаты')}">${ICON.del}</button></div>
   <div class="slide"><span class="spk">${ICON.spkLow}</span><input type="range" min="0" max="1" step="0.01" data-act="vol" aria-label="${L('Громкость устройства')}"><span class="spk">${ICON.spkHigh}</span></div>`;
 const LAT_ROW = `
   <div class="devhead"><span class="kind"></span><span class="who"><span class="name"></span></span><span class="readout"></span></div>
@@ -886,8 +919,27 @@ function keyedRows(ul, rows, items, template, update) {
   for (const [id, li] of rows) if (!seen.has(id)) { li.remove(); rows.delete(id); }
 }
 
+const ago = (t) => {
+  const m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? L('только что') : m < 60 ? L('{n} мин назад', { n: m }) : m < 1440 ? L('{n} ч назад', { n: Math.round(m / 60) })
+    : L('{n} дн назад', { n: Math.round(m / 1440) });
+};
+
+function renderKnown() {
+  const known = (snap.known || []).slice().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  $('#known').hidden = !known.length;
+  $('#knownrows').innerHTML = known.map((d) => `<li class="dev"><div class="devhead"><span class="kind">${ICON[d.kind] || ICON.computer}</span>
+    <span class="who"><span class="name">${esc(d.name)}</span><span class="sub">${d.lastSeen ? esc(ago(d.lastSeen)) : ''}</span></span>
+    <button class="icon" data-key="${esc(d.key)}" title="${L('Забыть')}" aria-label="${L('Забыть')}">${ICON.del}</button></div></li>`).join('');
+}
+$('#knownrows').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-key]');
+  if (b) cmd('forget', { key: b.dataset.key });
+});
+
 function renderDevices() {
   const st = snap.state;
+  renderKnown();
   keyedRows($('#volrows'), volRows, snap.clients, VOL_ROW, (li, c) => {
     let state;
     if (!c.joined) state = `<span class="mut">${L('пульт')}</span>`;
@@ -899,6 +951,7 @@ function renderDevices() {
     li.querySelector('.sub').title = li.querySelector('.sub').textContent;
     li.querySelector('.name').innerHTML = devName(c);
     li.querySelector('.sub').innerHTML = state + (c.ip ? ` · ${esc(c.ip)}` : '') + (c.rtt != null ? ` · ${esc(c.rtt)} ${L('мс')}` : '');
+    li.querySelector('[data-act=forget]').hidden = c.id === clientId || c.host;
     const mute = li.querySelector('[data-act=mute]');
     mute.innerHTML = c.muted ? ICON.muted : ICON.sound;
     mute.classList.toggle('on', !!c.muted);
@@ -945,6 +998,8 @@ function renderYtHelp(t) {
 
 function render() {
   $('#conn').className = 'dot' + (online ? ' on' : '');
+  $('#modes').hidden = !joined && !remoteOnly;
+  for (const b of document.querySelectorAll('#modes button')) b.classList.toggle('primary', b.dataset.mode === (joined ? 'sound' : 'remote'));
   $('#conntext').textContent = L(online ? (joined ? (muted ? 'заглушено' : 'звук включён') : remoteOnly ? 'пульт' : 'на связи')
     : link?.kind === 'guest' ? 'ищу хаб комнаты…' : 'нет связи');
   // iPhone stops a page's sound when the screen locks or Safari goes to the background.
@@ -961,12 +1016,16 @@ function render() {
   document.body.classList.toggle('playing', st.playing);
 
   $('#title').textContent = st.live ? L('Трансляция с телефона') : st.calibrate ? L('Калибровка щелчками') : t ? t.name : L('Нет трека — добавь музыку ниже');
-  $('#upnext').textContent = st.upNext && !st.calibrate ? L('Далее: {name}', { name: trackName(st.upNext) }) : '';
+  $('#upnext').textContent = st.calibrate || st.live ? '' : st.repeat && t ? L('Повторяется этот трек')
+    : st.upNext ? L('Далее: {name}', { name: trackName(st.upNext) }) : '';
   $('#play').innerHTML = st.playing || st.waiting ? ICON.pause : ICON.play;
   $('#play').disabled = !t || st.live;
   $('#prev').disabled = st.live;
   $('#seek').hidden = st.live;
   $('#next').disabled = !st.upNext;
+  $('#repeat').classList.toggle('on', !!st.repeat);
+  $('#repeat').setAttribute('aria-pressed', String(!!st.repeat));
+  $('#repeat').disabled = st.live;
 
   let s = '';
   const err = loadErrors.get(st.trackId);
@@ -1017,14 +1076,21 @@ function render() {
   $('#caltip').classList.toggle('show', !!st.calibrate);
 
   const l = snap.links;
-  renderQr(l.primary);
-  // A room hosted by the Android app has both: its Wi-Fi address (the QR) and the room code for any network.
+  renderQr('qr', l.primary);
+  // A room hosted by the Android app has both: its Wi-Fi address (the first QR) and the room on the site for any
+  // network (the second QR, with the room code).
+  const both = !!(snap.room && l.urls.length);
+  $('#connect2').hidden = !both;
+  if (both) renderQr('qr2', snap.room.url);
+  $('#links2').innerHTML = both
+    ? `<div class="hint">${L('Из любой сети — код комнаты')}</div><div class="roomcode">${esc(snap.room.code)}</div>
+      <a class="alt" href="${esc(snap.room.url)}">${esc(snap.room.url.replace(/^https?:\/\//, ''))}</a>
+      <div class="hint" style="margin-top:6px">${L('Или наведи камеру на этот QR: комната откроется на сайте через интернет.')}</div>`
+    : '';
   const lanLinks = l.urls.map((u, i) => `<a class="${i ? 'alt' : ''}" href="${esc(u)}">${esc(u.replace('http://', ''))}</a>`).join('');
-  $('#links').innerHTML = snap.room && l.urls.length
+  $('#links').innerHTML = both
     ? `${lanLinks}<div class="hint" style="margin-top:6px">${L(`Наведи камеру телефона на QR или набери адрес в браузере: так подключаются
-      устройства в той же Wi-Fi сети, интернет не нужен.`)}</div>
-      <div class="hint" style="margin-top:10px">${L('Из любой сети — код комнаты')}</div><div class="roomcode">${esc(snap.room.code)}</div>
-      <a class="alt" href="${esc(snap.room.url)}">${esc(snap.room.url.replace(/^https?:\/\//, ''))}</a>`
+      устройства в той же Wi-Fi сети, интернет не нужен.`)}</div>`
     : snap.room
     ? `<div class="hint">${L('Код комнаты')}</div><div class="roomcode">${esc(snap.room.code)}</div>
       <a class="alt" href="${esc(snap.room.url)}">${esc(snap.room.url.replace(/^https?:\/\//, ''))}</a>
@@ -1108,8 +1174,23 @@ for (const b of document.querySelectorAll('[data-lang]')) {
 }
 $('#prev').innerHTML = ICON.prev;
 $('#next').innerHTML = ICON.next;
+$('#repeat').innerHTML = ICON.repeat;
 $('#join').onclick = join;
-$('#remote').onclick = () => { remoteOnly = true; $('#joinbox').classList.add('hide'); render(); };
+// This device becomes only a remote: its sound stops, the room goes on without it.
+function remote() {
+  joined = false;
+  remoteOnly = true;
+  session.set('ya-mode', 'remote');
+  $('#joinbox').classList.add('hide');
+  syncPlayers();
+  try { if (yt.ready) yt.player.pauseVideo(); } catch {}
+  sendStatus();
+  render();
+}
+$('#remote').onclick = remote;
+for (const b of document.querySelectorAll('#modes button')) {
+  b.onclick = () => { if (b.dataset.mode === 'sound') { if (!joined) join(); } else if (!remoteOnly) remote(); };
+}
 $('#resumebtn').onclick = () => { unlockAudio(); };
 $('#unmutebtn').onclick = () => setMine({ muted: false });
 
@@ -1121,6 +1202,7 @@ $('#play').onclick = () => {
 };
 $('#next').onclick = () => cmd('next');
 $('#prev').onclick = () => cmd('prev');
+$('#repeat').onclick = () => { if (snap) cmd('repeat', { on: !snap.state.repeat }); };
 
 $('#seek').addEventListener('input', () => { seeking = true; tick(); });
 $('#seek').addEventListener('change', () => { seeking = false; cmd('seek', { position: Number($('#seek').value) }); });
@@ -1168,6 +1250,9 @@ $('#volrows').addEventListener('click', (e) => {
     else cmd('device', { id: r.c.id, muted: !r.c.muted });
   }
   if (act === 'find') cmd('identify', { id: r.c.id });
+  if (act === 'forget' && confirm(L('Убрать «{name}» из комнаты? Хаб забудет его настройки, а страница на нём отключится.', { name: r.c.name }))) {
+    cmd('forget', { key: r.c.key });
+  }
   if (act === 'rename') {
     const name = prompt(L('Как назвать это устройство?'), r.c.name);
     if (name && name.trim()) cmd('device', { id: r.c.id, name: name.trim() });
@@ -1199,9 +1284,34 @@ $('#resyncall').onclick = () => cmd('resync');
 $('#calib').onclick = () => cmd('calibrate', { on: !snap?.state.calibrate });
 $('#calstop').onclick = () => cmd('calibrate', { on: false });
 
-$('#file').onchange = async (e) => {
+$('#file').onchange = (e) => {
   const files = [...e.target.files];
   e.target.value = '';
+  addFiles(files);
+};
+
+// Files dragged from the computer onto the library (or anywhere on the page: a miss must not open the file instead).
+const AUDIO_FILE = /\.(mp3|m4a|aac|wav|flac|ogg|oga|opus|webm|mp4)$/i;
+const dragsFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+let dragDepth = 0;
+window.addEventListener('dragenter', (e) => { if (dragsFiles(e) && link) { dragDepth++; $('#library').classList.add('drop'); } });
+window.addEventListener('dragleave', () => { if (dragDepth && !--dragDepth) $('#library').classList.remove('drop'); });
+window.addEventListener('dragover', (e) => { if (dragsFiles(e)) e.preventDefault(); });
+window.addEventListener('drop', (e) => {
+  if (!dragsFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  $('#library').classList.remove('drop');
+  const files = [...e.dataTransfer.files].filter((f) => f.type.startsWith('audio/') || AUDIO_FILE.test(f.name));
+  if (!link) return;
+  if (!files.length) { $('#upinfo').textContent = L('Это не аудиофайлы'); return; }
+  $('#library').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  addFiles(files);
+});
+
+let uploads = Promise.resolve();   // drops while files still go out wait their turn
+const addFiles = (files) => (uploads = uploads.then(() => sendFiles(files)));
+async function sendFiles(files) {
   const errors = [];
   for (const [i, f] of files.entries()) {
     $('#upinfo').textContent = L('Отправка {i}/{n}…', { i: i + 1, n: files.length });
@@ -1215,7 +1325,7 @@ $('#file').onchange = async (e) => {
     }
   }
   $('#upinfo').textContent = errors.length ? L('Не отправились: {list}', { list: errors.join(', ') }) : '';
-};
+}
 
 $('#name').onchange = () => {
   const name = $('#name').value.trim();
@@ -1293,7 +1403,10 @@ function begin(l) {
   if (sharedLink) setTimeout(() => addShared(sharedLink), 0);
   if (l.kind === 'host' && roomFromUrl() !== l.code) history.replaceState(null, '', '#r=' + l.code);
   $('#roombox').classList.add('hide');
-  $('#joinbox').classList.remove('hide');
+  const mode = session.get('ya-mode');
+  if (mode === 'sound') join();
+  else if (mode === 'remote') remote();
+  else $('#joinbox').classList.remove('hide');
   connect();
   syncClock(16).then(() => sendStatus());
   render();

@@ -10,7 +10,7 @@
 //   media(track, onProgress) → ArrayBuffer, upload(file, onProgress) → { id, hash }, youtube(url) → result,
 //   live(onPacket) → stop(): the broadcast's sound while the hub is in broadcast mode (packets, see parsePacket),
 // }
-import { createHub, youtubeId, youtubeInfo } from './core/hub.mjs?v=2026.11.03';
+import { createHub, youtubeId, youtubeInfo } from './core/hub.mjs?v=1.1';
 
 const APP_ID = 'youraura-1';
 const MAX_FILE = 500 * 1024 * 1024;
@@ -88,6 +88,22 @@ function readLive(url, onPacket) {
   return () => { stopped = true; ctl.abort(); };
 }
 
+// The same, one packet per WebSocket message.
+function wsLive(url, onPacket) {
+  let stopped = false, s = null;
+  const go = () => {
+    if (stopped) return;
+    s = new WebSocket(wsUrl(url));
+    s.binaryType = 'arraybuffer';
+    s.onmessage = (m) => onPacket(new Uint8Array(m.data));
+    s.onclose = () => { if (!stopped) setTimeout(go, 1000); };
+  };
+  go();
+  return () => { stopped = true; s?.close(); };
+}
+
+const wsUrl = (path) => new URL(path, location.href).href.replace(/^http/, 'ws');
+
 // ---------- server (HTTP) ----------
 export async function hasServer() {
   try {
@@ -98,14 +114,39 @@ export async function hasServer() {
 
 export function serverLink({ clientId, deviceKey, fingerprint }) {
   const post = (path, body) => fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  let ws = false;   // the hub answers WebSockets (the Android app); then the live sound comes that way too
   return {
     kind: 'server',
+    // Events come over a WebSocket where the hub has one: some VPNs, proxies and traffic filters hold a streamed
+    // HTTP answer until it ends, so the event stream would never arrive through them. A hub without WebSockets
+    // (server.mjs) gets the event stream.
     open(on) {
-      const es = new EventSource(`api/events?id=${clientId}&key=${deviceKey}&fp=${encodeURIComponent(JSON.stringify(fingerprint))}`);
-      es.addEventListener('snapshot', (e) => on.snapshot(JSON.parse(e.data)));
-      es.addEventListener('identify', () => on.identify());
-      es.onopen = () => on.online(true);
-      es.onerror = () => on.online(false);
+      const url = `api/events?id=${clientId}&key=${deviceKey}&fp=${encodeURIComponent(JSON.stringify(fingerprint))}`;
+      const event = (name, data) => {
+        if (name === 'snapshot') on.snapshot(data);
+        else if (name === 'identify') on.identify();
+        else if (name === 'removed') on.removed();
+      };
+      const stream = () => {
+        const es = new EventSource(url);
+        es.addEventListener('snapshot', (e) => event('snapshot', JSON.parse(e.data)));
+        es.addEventListener('identify', () => event('identify'));
+        es.addEventListener('removed', () => { es.close(); event('removed'); });
+        es.onopen = () => on.online(true);
+        es.onerror = () => on.online(false);
+      };
+      const socket = () => {
+        let s;
+        try { s = new WebSocket(wsUrl(url)); } catch { return stream(); }
+        s.onopen = () => { ws = true; on.online(true); };
+        s.onmessage = (m) => { const { e, d } = JSON.parse(m.data); event(e, d); };
+        s.onclose = () => {
+          if (!ws) return stream();
+          on.online(false);
+          setTimeout(socket, 1500);
+        };
+      };
+      socket();
     },
     async time() { return (await (await fetch('api/time', { cache: 'no-store' })).json()).t; },
     status(body) { post('api/status', body).catch(() => {}); },
@@ -131,7 +172,7 @@ export function serverLink({ clientId, deviceKey, fingerprint }) {
       if (!r.ok) throw new Error(j.error);
       return j;
     },
-    live: (onPacket) => readLive('api/live', onPacket),
+    live: (onPacket) => (ws ? wsLive : readLive)('api/live', onPacket),
   };
 }
 
@@ -163,7 +204,7 @@ export const cleanRoomCode = (s) => String(s || '').toUpperCase().replace(/[^A-Z
 export const roomUrl = (code) => `${app ? SITE : location.origin + location.pathname}#r=${code}`;
 
 let trystero = null;
-const loadTrystero = () => (trystero ??= import('./vendor/trystero-nostr.js?v=2026.11.03'));
+const loadTrystero = () => (trystero ??= import('./vendor/trystero-nostr.js?v=1.1'));
 
 async function joinRoom(code) {
   const { joinRoom: join } = await loadTrystero();
@@ -242,6 +283,9 @@ export async function hostLink({ code, clientId, deviceKey, fingerprint }) {
     devices: (await store.get('devices')) || {},
     saveTracks: (tracks) => { tellFiles(tracks); store.set('tracks', JSON.parse(JSON.stringify(tracks))).catch(() => {}); },
     saveDevices: (devices) => store.set('devices', JSON.parse(JSON.stringify(devices))).catch(() => {}),
+    playback: await store.get('playback'),
+    savePlayback: (p) => store.set('playback', JSON.parse(JSON.stringify(p))).catch(() => {}),
+    hostId: clientId,
     send(cid, event, data) {
       if (cid === clientId) return local && (event === 'snapshot' ? local.snapshot(data) : local.identify());
       if (lanClients.has(cid)) return app.send(cid, event, JSON.stringify(data));
@@ -445,6 +489,7 @@ export async function guestLink({ code, clientId, deviceKey, fingerprint }) {
     if (peerId !== host || !on || !m) return;
     if (m.event === 'snapshot') on.snapshot(m.data);
     if (m.event === 'identify') on.identify();
+    if (m.event === 'removed') on.removed();
   } });
   room.makeAction('host', { onMessage: (m, { peerId }) => {
     if (m?.code !== code) return;

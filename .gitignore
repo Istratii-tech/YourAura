@@ -5,3 +5,55 @@ node_modules/
 __pycache__/
 # the privacy gate (its word list and its scripts) stays on this machine: never published
 tools/
+
+# Файлы ИИ-инструментов: не публиковать (пути, адреса, токены, история чатов)
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+GEMINI.md
+.specstory/
+.cursor/
+.cursorrules
+.windsurf/
+.windsurfrules
+.aider*
+.continue/
+.codex/
+.gemini/
+.mcp.json
+.github/copilot-instructions.md
+
+# Снимки и записи экрана: в репозиторий только после просмотра человеком (git add -f ФАЙЛ)
+*screenshot*.png
+*screenshot*.jpg
+*screenshot*.jpeg
+*screenshot*.webp
+*screenshot*.heic
+*screenshot*.mp4
+*screenshot*.mov
+*screencap*.png
+*screencap*.jpg
+*screencap*.jpeg
+*screencap*.webp
+*screencap*.heic
+*screencap*.mp4
+*screencap*.mov
+*screenrecord*.png
+*screenrecord*.jpg
+*screenrecord*.jpeg
+*screenrecord*.webp
+*screenrecord*.heic
+*screenrecord*.mp4
+*screenrecord*.mov
+*-shot.png
+*_shot.png
+*-shot.jpg
+*_shot.jpg
+screen.png
+screen[0-9]*.png
+Screen Shot*
+Снимок экрана*
+*скриншот*
+Screen Recording*
+Запись экрана*

@@ -32,6 +32,24 @@ const EN = {
   'Назад': 'Previous',
   'Играть': 'Play',
   'Следующий': 'Next',
+  'Повтор трека': 'Repeat track',
+  'Играть и пульт': 'Play and remote',
+  'или перетащи файлы сюда': 'or drop files here',
+  'Это не аудиофайлы': 'These are not audio files',
+  'Убрать из комнаты': 'Remove from the room',
+  'Убрать «{name}» из комнаты? Хаб забудет его настройки, а страница на нём отключится.':
+    'Remove “{name}” from the room? The hub forgets its settings, and the page on it disconnects.',
+  'Устройство убрано': 'Device removed',
+  'Это устройство убрали из комнаты, звук и пульт здесь выключены.': 'This device was removed from the room; sound and the remote are off here.',
+  'Подключиться снова': 'Connect again',
+  'Не в сети. Хаб помнит их имя, громкость и задержку.': 'Offline. The hub remembers their name, volume and delay.',
+  'Забыть': 'Forget',
+  'только что': 'just now',
+  '{n} мин назад': '{n} min ago',
+  '{n} ч назад': '{n} h ago',
+  '{n} дн назад': '{n} d ago',
+  'Только пульт': 'Remote only',
+  'Повторяется этот трек': 'This track repeats',
   'Очередь': 'Queue',
   'Очистить': 'Clear',
   'Библиотека': 'Library',
@@ -150,6 +168,8 @@ const EN = {
   'Наведи камеру телефона на QR или набери адрес в браузере: так подключаются устройства в той же Wi-Fi сети, интернет не нужен.':
     'Point a phone’s camera at the QR code or type the address in a browser: that is how devices on the same Wi-Fi join, no internet needed.',
   'Из любой сети — код комнаты': 'From any network — the room code',
+  'Или наведи камеру на этот QR: комната откроется на сайте через интернет.':
+    'Or point the camera at this QR code: the room opens on the site over the internet.',
   'Наведи камеру телефона на QR или открой ссылку. Лучше, когда все в одной Wi-Fi сети: музыка дойдёт быстрее.':
     'Point a phone’s camera at the QR code or open the link. It works best when everyone is on the same Wi-Fi: the music arrives faster.',
   'Наведи камеру телефона на QR или набери адрес в браузере. Устройства должны быть в той же Wi-Fi сети.':

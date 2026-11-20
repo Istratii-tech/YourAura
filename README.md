@@ -22,14 +22,15 @@ Requests and questions: issues of this repository or `https://t.me/istratii_tech
 2. Нажмите «Создать комнату».
 3. На других устройствах в той же сети Wi-Fi наведите камеру на QR-код или наберите адрес под ним.
    Из другой сети — код комнаты на https://istratii-tech.github.io/YourAura/
-4. На каждом устройстве нажмите «Включить звук» (или «Только пульт»).
-5. Добавьте музыку: «＋ Добавить музыку» — файлы с любого устройства; ссылка на YouTube или «Поделиться → YourAura»
-   в приложении YouTube — звук скачается на телефон.
+4. На каждом устройстве нажмите «Включить звук» (или «Только пульт»). Режим можно сменить вверху страницы.
+5. Добавьте музыку: «＋ Добавить музыку» — файлы с любого устройства (с компьютера их можно перетащить в библиотеку);
+   ссылка на YouTube или «Поделиться → YourAura» в приложении YouTube — звук скачается на телефон.
 6. **Трансляция.** «Транслировать звук телефона» — всё, что играет на телефоне (любое приложение, видео, игры),
    зазвучит на устройствах комнаты на секунду позже. Звук на самом телефоне уберите. Остановить — той же кнопкой
    или из уведомления.
-7. Экран телефона-хаба можно выключить, звонок ставит комнату на паузу. На iPhone экран сам не гаснет, пока играет
-   музыка; не блокируйте его и не сворачивайте Safari.
+7. Экран телефона-хаба можно выключить, звонок ставит комнату на паузу. Если закрыть приложение и открыть снова,
+   комната продолжит тот же трек с того же места, а устройства переподключатся сами. На iPhone экран сам не гаснет,
+   пока играет музыка; не блокируйте его и не сворачивайте Safari.
 8. Если устройство звучит позже остальных (часто это Bluetooth-колонки), сдвиньте его задержку в «Синхронизации»
    или включите «Калибровку щелчками».
 
@@ -47,14 +48,15 @@ How to use YourAura
 2. Tap “Create a room”.
 3. On the other devices on the same Wi-Fi, point the camera at the QR code or type the address under it.
    From another network, use the room code at https://istratii-tech.github.io/YourAura/
-4. On each device, tap “Play sound on this device” (or “Remote only”).
-5. Add music: “＋ Add music” takes files from any device; a YouTube link, or Share → YourAura in the YouTube app,
-   downloads the sound to the phone.
+4. On each device, tap “Play sound on this device” (or “Remote only”). The mode can be changed at the top of the page.
+5. Add music: “＋ Add music” takes files from any device (on a computer, drag them onto the library); a YouTube link,
+   or Share → YourAura in the YouTube app, downloads the sound to the phone.
 6. **Broadcast.** “Broadcast the phone’s sound” sends whatever plays on the phone (any app, videos, games) to the
    room’s devices, a second later. Turn the sound down on the phone itself. Stop it with the same button or from
    the notification.
-7. The hub phone’s screen can be off, and a call pauses the room. On an iPhone the screen stays on while music plays;
-   don’t lock it or leave Safari.
+7. The hub phone’s screen can be off, and a call pauses the room. Close the app and open it again, and the room goes on
+   with the same track from the same moment; the devices reconnect by themselves. On an iPhone the screen stays on
+   while music plays; don’t lock it or leave Safari.
 8. If a device sounds later than the others (Bluetooth speakers often do), move its delay under “Sync” or use
    “Click calibration”.
 

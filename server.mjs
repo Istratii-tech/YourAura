@@ -31,6 +31,7 @@ const now = () => performance.timeOrigin + performance.now();
 fs.mkdirSync(MEDIA, { recursive: true });
 const INDEX = path.join(MEDIA, 'index.json');
 const DEVICES = path.join(MEDIA, 'devices.json');
+const PLAYBACK = path.join(MEDIA, 'playback.json');   // трек, место в нём и очередь: хаб продолжает после перезапуска
 const fileHash = (fp) => crypto.createHash('sha256').update(fs.readFileSync(fp)).digest('hex').slice(0, 16);
 const readJsonFile = (f, fallback) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return fallback; } };
 
@@ -47,6 +48,8 @@ const hub = createHub({
   devices: readJsonFile(DEVICES, {}),
   saveTracks: (tracks) => fs.writeFileSync(INDEX, JSON.stringify(tracks, null, 1)),
   saveDevices: (devices) => fs.writeFile(DEVICES, JSON.stringify(devices, null, 1), () => {}),
+  playback: readJsonFile(PLAYBACK, null),
+  savePlayback: (p) => fs.writeFile(PLAYBACK, JSON.stringify(p), () => {}),
   send: (id, event, data) => streams.get(id)?.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
   extra: () => ({ links, mediaDir: MEDIA, hubKind: 'server' }),
   removeMedia: (t) => { if (t.file) fs.rm(path.join(MEDIA, t.file), { force: true }, () => {}); },

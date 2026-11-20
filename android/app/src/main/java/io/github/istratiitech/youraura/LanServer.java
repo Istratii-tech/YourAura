@@ -26,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -43,6 +44,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 // this server only carries requests to it (__yaApp.lan in net.mjs) and its events back to the devices.
 // Music files of the room live in files/media/<hash>: the page reads them at /media/, devices here.
 // In broadcast mode /api/live carries the captured sound (Broadcast.java) to the devices and the page.
+// Both streams work as WebSockets too: some VPNs, proxies and traffic filters hold any streamed HTTP answer
+// until it ends, so a device behind one never hears from the hub; they let WebSockets through.
 final class LanServer {
     private static final int[] PORTS = {8600, 8601, 8602, 8603, 8604};
     private static final long MAX_UPLOAD = 500L * 1024 * 1024;
@@ -78,17 +81,30 @@ final class LanServer {
     final String token;   // the page's own requests (/app/put) carry it
     private ServerSocket server;
     private final ExecutorService pool = Executors.newCachedThreadPool();
-    private final Map<String, OutputStream> streams = new ConcurrentHashMap<>();   // client id -> SSE
+    private final Map<String, Sink> streams = new ConcurrentHashMap<>();   // client id -> its events
     private final Map<Integer, CompletableFuture<String>> waits = new ConcurrentHashMap<>();
     private final java.util.Set<Listener> listeners = ConcurrentHashMap.newKeySet();   // /api/live
+
+    // A device's open stream: SSE in HTTP chunks, or a WebSocket.
+    private static final class Sink {
+        final OutputStream out;
+        final boolean ws;
+
+        Sink(OutputStream out, boolean ws) {
+            this.out = out;
+            this.ws = ws;
+        }
+    }
 
     private static final class Listener {
         final java.util.concurrent.ArrayBlockingQueue<byte[]> queue = new java.util.concurrent.ArrayBlockingQueue<>(40);   // 2 s
         final OutputStream out;
+        final boolean ws;
         volatile boolean closed;
 
-        Listener(OutputStream out) {
+        Listener(OutputStream out, boolean ws) {
             this.out = out;
+            this.ws = ws;
         }
     }
     private final AtomicInteger seq = new AtomicInteger();
@@ -137,7 +153,7 @@ final class LanServer {
         pool.execute(() -> {   // routers and phones drop quiet connections
             while (!server.isClosed()) {
                 SystemClock.sleep(15000);
-                for (Map.Entry<String, OutputStream> e : streams.entrySet()) write(e.getKey(), e.getValue(), ": ping\n\n");
+                for (Map.Entry<String, Sink> e : streams.entrySet()) deliver(e.getKey(), e.getValue(), null, null);
             }
         });
     }
@@ -146,7 +162,7 @@ final class LanServer {
         Broadcast.setSink(null);
         for (Listener l : listeners) endLive(l.out);
         try { if (server != null) server.close(); } catch (IOException ignored) {}
-        for (OutputStream s : streams.values()) try { s.close(); } catch (IOException ignored) {}
+        for (Sink s : streams.values()) try { s.out.close(); } catch (IOException ignored) {}
         streams.clear();
         pool.shutdownNow();
     }
@@ -182,8 +198,8 @@ final class LanServer {
 
     // ---------- from the page ----------
     void send(String clientId, String event, String data) {
-        OutputStream s = streams.get(clientId);
-        if (s != null) write(clientId, s, "event: " + event + "\ndata: " + data + "\n\n");
+        Sink s = streams.get(clientId);
+        if (s != null) deliver(clientId, s, event, data);
     }
 
     void setTracks(String json) {
@@ -235,9 +251,10 @@ final class LanServer {
             if (r == null) { s.close(); return; }
             r.ip = s.getInetAddress().getHostAddress().replaceFirst("^::ffff:", "");
             r.loopback = s.getInetAddress().isLoopbackAddress();   // IPv4 arrives as ::ffff:127.0.0.1 too
-            if (route(r, out)) {   // SSE or live sound: open until the device goes away
-                //noinspection StatementWithEmptyBody
-                while (in.read() >= 0) {}
+            if (route(r, out)) {   // events or live sound: open until the device goes away
+                if (isWs(r)) drainWs(in);
+                else //noinspection StatementWithEmptyBody
+                    while (in.read() >= 0) {}
                 if (r.path.equals("/api/live")) endLive(out);
                 else gone(r.query.get("id"), out);
             } else {
@@ -292,7 +309,7 @@ final class LanServer {
                         + "Access-Control-Allow-Private-Network: true\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));
                 return false;
             }
-            if (p.equals("/api/live")) return live(out);
+            if (p.equals("/api/live")) return live(r, out);
             if (p.equals("/api/time")) json(out, 200, new JSONObject().put("t", now()));
             else if (p.equals("/api/events")) return events(r, out);
             else if (p.equals("/api/cmd") && r.method.equals("POST")) { MainActivity.toPage("__yaApp.lan.cmd(" + small(r) + ")"); ok(out); }
@@ -329,43 +346,115 @@ final class LanServer {
             json(out, 400, new JSONObject().put("error", "нужен id"));
             return false;
         }
-        out.write(("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: keep-alive\r\n\r\n"
-                + "retry: 1500\n\n").getBytes(StandardCharsets.UTF_8));
-        out.flush();
-        OutputStream old = streams.put(id, out);
-        if (old != null) try { old.close(); } catch (IOException ignored) {}
+        boolean ws = isWs(r);
+        if (ws) wsAccept(r, out);
+        else {
+            out.write(("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: keep-alive\r\n"
+                    + "Transfer-Encoding: chunked\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            chunk(out, "retry: 1500\n\n".getBytes(StandardCharsets.UTF_8));
+        }
+        Sink old = streams.put(id, new Sink(out, ws));
+        if (old != null) try { old.out.close(); } catch (IOException ignored) {}
         JSONObject who = new JSONObject().put("key", r.query.containsKey("key") ? r.query.get("key") : JSONObject.NULL).put("ip", r.ip);
         try { who.put("fp", new JSONObject(r.query.get("fp"))); } catch (Exception ignored) {}
         MainActivity.toPage("__yaApp.lan.connect(" + JSONObject.quote(id) + "," + who + ")");
         return true;
     }
 
-    private void write(String id, OutputStream s, String text) {
+    // One event to a device (a keep-alive ping when event is null). Over a WebSocket: {"e": event, "d": data}.
+    private void deliver(String id, Sink s, String event, String data) {
         try {
             synchronized (s) {
-                s.write(text.getBytes(StandardCharsets.UTF_8));
-                s.flush();
+                if (s.ws && event == null) frame(s.out, 0x9, new byte[0]);
+                else if (s.ws) frame(s.out, 0x1, ("{\"e\":" + JSONObject.quote(event) + ",\"d\":" + data + "}").getBytes(StandardCharsets.UTF_8));
+                else chunk(s.out, (event == null ? ": ping\n\n" : "event: " + event + "\ndata: " + data + "\n\n").getBytes(StandardCharsets.UTF_8));
             }
         } catch (IOException e) {
-            gone(id, s);
+            gone(id, s.out);
         }
     }
 
-    // The device went away (unless it has reconnected with a new stream meanwhile).
+    private static boolean isWs(Request r) {
+        return "websocket".equalsIgnoreCase(r.headers.get("upgrade")) && r.headers.containsKey("sec-websocket-key");
+    }
+
+    private static void wsAccept(Request r, OutputStream out) throws Exception {
+        String accept = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-1")
+                .digest((r.headers.get("sec-websocket-key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").getBytes(StandardCharsets.ISO_8859_1)));
+        out.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept
+                + "\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+        out.flush();
+    }
+
+    // A WebSocket frame from the hub (never masked): 0x1 text, 0x2 binary, 0x9 ping.
+    private static void frame(OutputStream out, int opcode, byte[] b) throws IOException {
+        int n = b.length, h = n < 126 ? 2 : n < 65536 ? 4 : 10;
+        byte[] f = new byte[h + n];
+        f[0] = (byte) (0x80 | opcode);
+        if (n < 126) f[1] = (byte) n;
+        else if (n < 65536) {
+            f[1] = 126;
+            f[2] = (byte) (n >> 8);
+            f[3] = (byte) n;
+        } else {
+            f[1] = 127;
+            for (int i = 0; i < 8; i++) f[2 + i] = (byte) ((long) n >> (56 - 8 * i));
+        }
+        System.arraycopy(b, 0, f, h, n);
+        out.write(f);
+        out.flush();
+    }
+
+    // Frames from the device (pongs, its close) are read and dropped until it closes.
+    private static void drainWs(InputStream in) throws IOException {
+        for (;;) {
+            int b0 = in.read(), b1 = in.read();
+            if (b0 < 0 || b1 < 0) return;
+            long len = b1 & 0x7f;
+            if (len == 126) len = (in.read() << 8) | in.read();
+            else if (len == 127) {
+                len = 0;
+                for (int i = 0; i < 8; i++) len = (len << 8) | in.read();
+            }
+            if ((b1 & 0x80) != 0) len += 4;   // the mask
+            for (long i = 0; i < len; i++) if (in.read() < 0) return;
+            if ((b0 & 0x0f) == 0x8) return;
+        }
+    }
+
+    // Streams (events, live sound) go out in HTTP/1.1 chunks. A body with neither a length nor chunks ends only when
+    // the connection closes, and proxies or traffic filters on a device may hold all of it until then: the device
+    // then never hears from the hub while it is open.
+    private static void chunk(OutputStream out, byte[] b) throws IOException {
+        if (b.length == 0) return;   // an empty chunk would end the stream
+        byte[] size = (Integer.toHexString(b.length) + "\r\n").getBytes(StandardCharsets.ISO_8859_1);
+        byte[] c = new byte[size.length + b.length + 2];
+        System.arraycopy(size, 0, c, 0, size.length);
+        System.arraycopy(b, 0, c, size.length, b.length);
+        c[c.length - 2] = '\r';
+        c[c.length - 1] = '\n';
+        out.write(c);
+        out.flush();
+    }
+
     // Broadcast packets for one device while it listens. A device that falls behind loses the oldest packets
     // instead of holding up the others.
-    private boolean live(OutputStream out) throws IOException {
-        out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\n"
-                + "Access-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));
-        out.flush();
-        Listener l = new Listener(out);
+    private boolean live(Request r, OutputStream out) throws Exception {
+        boolean ws = isWs(r);
+        if (ws) wsAccept(r, out);
+        else {
+            out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\n"
+                    + "Access-Control-Allow-Origin: *\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            out.flush();
+        }
+        Listener l = new Listener(out, ws);
         listeners.add(l);
         pool.execute(() -> {
             try {
                 while (!l.closed) {
                     byte[] p = l.queue.take();
-                    out.write(p);
-                    out.flush();
+                    if (!l.ws) chunk(out, p);
+                    else if (p.length > 0) frame(out, 0x2, p);   // one packet per message
                 }
             } catch (Exception ignored) {
             } finally {
@@ -394,8 +483,10 @@ final class LanServer {
         }
     }
 
-    private void gone(String id, OutputStream s) {
-        if (id != null && streams.remove(id, s)) MainActivity.toPage("__yaApp.lan.disconnect(" + JSONObject.quote(id) + ")");
+    // The device went away (unless it has reconnected with a new stream meanwhile).
+    private void gone(String id, OutputStream out) {
+        Sink s = id == null ? null : streams.get(id);
+        if (s != null && s.out == out && streams.remove(id, s)) MainActivity.toPage("__yaApp.lan.disconnect(" + JSONObject.quote(id) + ")");
     }
 
     // A device adds a file: it is stored under its hash, the page adds the track (or finds it is there already).

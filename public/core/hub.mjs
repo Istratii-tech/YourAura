@@ -16,6 +16,7 @@
 export const START_LEAD_MS = 1200;   // запас между нажатием Play и реальным стартом
 export const YT_LEAD_MS = 2500;      // то же для плеера YouTube: ему нужно перемотать и забуферизовать
 export const WAIT_READY_MS = 20000;  // сколько ждать, пока все устройства загрузят трек
+export const RESUME_HOLD_MS = 5000;  // после перезапуска хаба: столько ждём, пока устройства переподключатся
 export const PREP_NEXT_MS = 6000;    // за сколько до конца трека назначать старт следующего (бесшовно)
 
 const FP_KEYS = ['os', 'browser', 'kind', 'model', 'screen', 'dpr'];
@@ -45,9 +46,12 @@ export function createHub(env) {
   const state = {
     trackId: tracks[0]?.id ?? null, playing: false, waiting: false, startAt: 0, position: 0,
     next: null, upNext: null, calibrate: null, resync: 0, masterVolume: 1,
+    repeat: false,   // повтор одного трека: после конца снова он, очередь ждёт
     live: false,   // трансляция: устройства играют звук телефона-хаба (net.mjs live), а не треки
   };
   let queue = [];   // [{ qid, trackId }] — «далее», после неё библиотека играет по порядку
+  const boot = randomId();   // этот запуск хаба: увидев новый, устройства перезагружают страницу
+  let holdUntil = 0;         // до этого времени трек не стартует: устройства ещё переподключаются
   let waitTimer = null, endTimer = null, prepTimer = null, endAt = 0;
 
   // ---------- устройства ----------
@@ -94,14 +98,19 @@ export function createHub(env) {
   // ---------- снимок для устройств ----------
   function snapshot() {
     return {
+      boot,
       state,
       queue,
       tracks: tracks.map(({ id, kind, videoId, author, name, size, duration, hash, pending, progress, dlError }) => ({ id, kind, videoId, author, name, size, duration, hash, pending, progress, dlError })),
       clients: [...clients].map(([id, c]) => ({
         id, key: c.rec.key, name: c.rec.name, kind: c.rec.fp?.kind || 'computer', ip: c.rec.ip, recognized: c.recognized,
+        host: id === env.hostId,
         joined: c.joined, ready: c.ready, failed: c.failed, errors: c.errors, loading: c.loading, rtt: c.rtt, diag: c.diag,
         latency: c.rec.latency, muted: c.rec.muted, volume: c.rec.volume,
       })),
+      // Устройства, которые хаб помнит, но сейчас не подключены (их можно забыть).
+      known: Object.values(devices).filter((d) => ![...clients.values()].some((c) => c.rec === d))
+        .map(({ key, name, fp, lastSeen }) => ({ key, name, kind: fp?.kind || 'computer', lastSeen })),
       ...(env.extra ? env.extra() : {}),
     };
   }
@@ -110,6 +119,23 @@ export function createHub(env) {
     const s = snapshot();
     for (const id of clients.keys()) env.send(id, 'snapshot', s);
   }
+
+  // ---------- сохранение воспроизведения ----------
+  // Трек, место в нём, очередь и повтор переживают перезапуск хаба (env.playback / env.savePlayback):
+  // открытое заново приложение продолжает с того же места.
+  let savedJson = '';
+  function savePlayback() {
+    if (!env.savePlayback) return;
+    const p = {
+      trackId: state.trackId, playing: state.playing || state.waiting, repeat: state.repeat, masterVolume: state.masterVolume,
+      position: Math.round(clamp(positionNow(), 0, track(state.trackId)?.duration ?? Infinity) * 10) / 10, queue,
+    };
+    const json = JSON.stringify(p);
+    if (json === savedJson) return;
+    savedJson = json;
+    env.savePlayback(p);
+  }
+  setInterval(() => { if (state.playing) savePlayback(); }, 2000);
 
   // ---------- воспроизведение ----------
   const positionNow = () => (state.playing ? (now() - state.startAt) / 1000 : state.position);
@@ -121,17 +147,21 @@ export function createHub(env) {
     return tracks[i + 1]?.id ?? null;
   }
   const consume = (id) => { if (queue[0]?.trackId === id) queue.shift(); };
+  // Что зазвучит после текущего: он сам при повторе, иначе «далее».
+  const followId = () => (state.repeat ? state.trackId : state.upNext);
 
   // Готовы ли все устройства со звуком играть трек id.
   function allReady(id) {
+    if (now() < holdUntil) return false;
     for (const c of clients.values()) if (c.joined && !c.ready.includes(id) && !c.failed.includes(id)) return false;
     return true;
   }
 
   // После любого изменения: пересчитать «что дальше», таймеры конца трека и разослать состояние.
   function settle() {
+    savePlayback();
     state.upNext = upNextId();
-    if (state.next && (!state.playing || state.next.after !== curKey() || state.next.trackId !== state.upNext)) state.next = null;
+    if (state.next && (!state.playing || state.next.after !== curKey() || state.next.trackId !== followId())) state.next = null;
     scheduleEnd();
     broadcast();
   }
@@ -147,21 +177,22 @@ export function createHub(env) {
   }
 
   function prepNext() {
-    if (!state.playing || state.next || !state.upNext || !allReady(state.upNext) || now() > endAt - 300) return;
-    state.next = { trackId: state.upNext, startAt: endAt, after: curKey() };
+    const id = followId();
+    if (!state.playing || state.next || !id || !allReady(id) || now() > endAt - 300) return;
+    state.next = { trackId: id, startAt: endAt, after: curKey() };
     broadcast();
   }
 
   function onEnd() {
     const n = state.next;
     if (n) {
-      consume(n.trackId);
+      if (!state.repeat) consume(n.trackId);
       Object.assign(state, { trackId: n.trackId, startAt: n.startAt, position: 0, next: null });
     } else {
-      const id = state.upNext;
+      const id = followId();
       Object.assign(state, { playing: false, position: 0, next: null });
       if (id) {
-        consume(id);
+        if (!state.repeat) consume(id);
         state.trackId = id;
         requestPlay();
       }
@@ -189,6 +220,7 @@ export function createHub(env) {
 
   function stop() {
     clearTimeout(waitTimer);
+    holdUntil = 0;
     if (state.playing) state.position = clamp(positionNow(), 0, track(state.trackId)?.duration ?? Infinity);
     Object.assign(state, { playing: false, waiting: false, next: null });
   }
@@ -266,6 +298,23 @@ export function createHub(env) {
         } else jump(tracks[i - 1].id);
         break;
       }
+      case 'forget': {   // убрать устройство: хаб его забывает, его открытая страница отключается
+        const d = devices[b.key];
+        if (!d) return;
+        for (const [id, x] of clients) {
+          if (x.rec !== d) continue;
+          if (id === env.hostId) return;   // хаб не убирает сам себя
+          env.send(id, 'removed', {});
+          clients.delete(id);
+        }
+        delete devices[b.key];
+        saveDevices();
+        if (state.waiting && allReady(state.trackId)) startNow();
+        break;
+      }
+      case 'repeat':
+        state.repeat = !!b.on;
+        break;
       case 'enqueue':
         if (!track(b.trackId)) return;
         queue[b.first ? 'unshift' : 'push']({ qid: randomId(), trackId: b.trackId });
@@ -378,6 +427,21 @@ export function createHub(env) {
   }
 
   state.upNext = upNextId();
+  const saved = env.playback;
+  if (saved && track(saved.trackId)) {
+    Object.assign(state, {
+      trackId: saved.trackId, repeat: !!saved.repeat, masterVolume: clamp(saved.masterVolume ?? 1, 0, 1),
+      position: clamp(saved.position || 0, 0, track(saved.trackId).duration ?? Infinity),
+    });
+    queue = (Array.isArray(saved.queue) ? saved.queue : []).filter((q) => q && track(q.trackId));
+    if (saved.playing) {   // играло: ждём устройства и продолжаем
+      holdUntil = now() + RESUME_HOLD_MS;
+      state.waiting = true;
+      waitTimer = setTimeout(() => { requestPlay(); settle(); }, RESUME_HOLD_MS);
+    }
+    state.upNext = upNextId();
+  }
+
   return {
     tracks, state, track, connect, disconnect, command, status, snapshot, broadcast, settle,
     addTrack, offer, mergeTrack, trackReady, setLive, hasClient: (id) => clients.has(id),
